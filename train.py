@@ -6,7 +6,7 @@ import random
 import r
 import numpy as np
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 #flags = tf.app.flags
 gpu_num = 2
 #flags.DEFINE_integer('max_steps', 5000, 'Number of steps to run trainer.')
@@ -14,7 +14,7 @@ gpu_num = 2
 #FLAGS = flags.FLAGS
 batch_size=30
 max_steps=5000
-train_split_path='/extra_disk/dataset/UCF_Crimes/Anomaly_Detection_splits/Anomaly_Train.txt'
+train_split_path='/data1/zhiyuyin/dataset/ucf_crimes/Anomaly_Detection_splits/Train.txt'
 #train_split_path='/share/dataset/UCF_Crimes/Anomaly_Detection_splits/Anomaly_Train.txt'
 model_save_dir='models/ucf-crimes'
 lamb1=8e-5
@@ -34,9 +34,9 @@ def fc_inference(_X, _dropout, batch_size, _weights, _biases):
   return out
 
 def placeholder_inputs(batch_size):
-  feature_placeholder_ano = tf.placeholder(tf.float32, shape=(None,4096))
+  feature_placeholder_ano = tf.placeholder(tf.float32, shape=(None,1024))
   ano_segment_ids= tf.placeholder(tf.int32, shape=(None)) #每个位置存放该视频的seg数量
-  feature_placeholder_no = tf.placeholder(tf.float32, shape=(None,4096))
+  feature_placeholder_no = tf.placeholder(tf.float32, shape=(None,1024))
   no_segment_ids= tf.placeholder(tf.int32, shape=(None)) #每个位置存放该视频的seg数量
   return feature_placeholder_ano, ano_segment_ids, feature_placeholder_no, no_segment_ids
 
@@ -68,8 +68,10 @@ def next_batch(batch_size,ano_list,no_list):
     # 在两个list中各随机选取一个video，把每个segments加入集合
     rand_ano=random.randint(0,len(ano_list)-1)
     rand_no=random.randint(0,len(no_list)-1)
-    ano_feature_path=os.path.join('/home/zy_17/workspace/C3D/C3D-v1.0/UCF_Crimes_C3D_features/Videos' , ano_list[rand_ano].split('.')[0])
-    no_feature_path=os.path.join('/home/zy_17/workspace/C3D/C3D-v1.0/UCF_Crimes_C3D_features/Videos' , no_list[rand_no].split('.')[0] )
+    #ano_feature_path=os.path.join('/home/zy_17/workspace/C3D/C3D-v1.0/UCF_Crimes_C3D_features/Videos' , ano_list[rand_ano].split('.')[0])
+    #no_feature_path=os.path.join('/home/zy_17/workspace/C3D/C3D-v1.0/UCF_Crimes_C3D_features/Videos' , no_list[rand_no].split('.')[0] )
+    ano_feature_path=os.path.join('/data1/zhiyuyin/experiments/YZYN-Anomaly-Detection/features_16_segm' , os.path.basename(ano_list[rand_ano]).split('.')[0])
+    no_feature_path=os.path.join('/data1/zhiyuyin/experiments/YZYN-Anomaly-Detection/features_16_segm' , os.path.basename(no_list[rand_no]).split('.')[0] )
     #ano_feature_path=os.path.join('/home/yzy/Videos' , ano_list[rand_ano].split('.')[0])
     #no_feature_path=os.path.join('/home/yzy/Videos' , no_list[rand_no].split('.')[0] )
     # 读取所有数据，放入list，然后逐个读取存入feature_placeholder_ano
@@ -84,7 +86,8 @@ def next_batch(batch_size,ano_list,no_list):
       for ind,seg_ano in enumerate(ano_feature_list):
         # 读取该条数据
         #print seg_ano
-        header, data =  r.read_binary_fc(os.path.join(ano_feature_path, seg_ano.split('/')[-1]))
+        # header, data =  r.read_binary_fc(os.path.join(ano_feature_path, seg_ano.split('/')[-1]))
+        data = np.load(seg_ano)
         # 把data加入
         feature_placeholder_ano.append(data)
         # 做一个标记
@@ -98,7 +101,8 @@ def next_batch(batch_size,ano_list,no_list):
       for ind,seg_no in enumerate(no_feature_list):
         # 读取该条数据
         #print seg_no
-        header, data =  r.read_binary_fc(os.path.join(no_feature_path, seg_no.split('/')[-1]))
+        #header, data =  r.read_binary_fc(os.path.join(no_feature_path, seg_no.split('/')[-1]))
+        data = np.load(seg_no)
         # 把data加入
         feature_placeholder_no.append(data)
         # 做一个标记
@@ -121,7 +125,7 @@ def run_training():
 
   with tf.variable_scope('fc') as var_scope:
     weights = {
-            'w1': _variable_with_weight_decay('w1', [4096, 512], 0.0005),
+            'w1': _variable_with_weight_decay('w1', [1024, 512], 0.0005),
             'w2': _variable_with_weight_decay('w2', [512,32], 0.0005),
             'w3': _variable_with_weight_decay('w3', [32,1], 0.0005),
             }
@@ -132,13 +136,16 @@ def run_training():
   varlist = list( set(weights.values()) )
   # 前传
   ano_out = fc_inference(feature_placeholder_ano, 0.6, batch_size, weights, biases)
+  print '@@@@@@@@@@@@@@@@@@@'
+  print ano_out.shape.as_list()
+  print '@@@@@@@@@@@@@@@@@@@'
   no_out = fc_inference(feature_placeholder_no, 0.6, batch_size, weights, biases)
     
   # 计算平滑约束loss
   #with tf.Session() as sess:
   #  len_batch=tf.shape(ano_segment_ids).eval()[0]
   try:
-    difference_list=[tf.subtract(ano_out[i+1],ano_out[i]) for i in range(0,1000)]
+    difference_list=[tf.subtract(ano_out[i+1],ano_out[i]) for i in range(0,batch_size*32-1)]
   except:
     print '越界'
     pass
@@ -195,7 +202,7 @@ def run_training():
     #saver2.restore(sess,'./finetune_model/')
     #导入pre_trained模型变量
     #saver.restore(sess,MODEL_NAME)
-    saver2.restore(sess,'./model/bk.ckpt-2654')
+    #saver2.restore(sess,'./model/bk.ckpt-2654')
 
     sess.graph.finalize()
     # 读入训练列表
@@ -208,7 +215,7 @@ def run_training():
         no_list.append(item)
       else:
         ano_list.append(item)
-    ano_list.remove('')
+    #ano_list.remove('')
     #print ano_list
 
     for i in range(max_steps):
